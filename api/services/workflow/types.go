@@ -47,8 +47,9 @@ type Edge struct {
 }
 
 type ExecutionRequest struct {
-	FormData  map[string]interface{} `json:"formData"`
-	Condition map[string]interface{} `json:"condition"`
+	FormData           map[string]interface{} `json:"formData"`
+	Condition          map[string]interface{} `json:"condition"`
+	WorkflowDefinition *WorkflowGraph         `json:"workflowDefinition,omitempty"`
 }
 
 type ExecutionResponse struct {

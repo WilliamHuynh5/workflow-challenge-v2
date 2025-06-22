@@ -66,6 +66,19 @@ func (s *Service) HandleExecuteWorkflow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if execReq.WorkflowDefinition != nil {
+		slog.Debug("Using provided workflow definition for execution", "id", id)
+		workflow.Definition = *execReq.WorkflowDefinition
+
+		if err := s.repo.SaveWorkflow(ctx, workflow); err != nil {
+			slog.Error("Failed to save updated workflow definition", "id", id, "error", err)
+		} else {
+			slog.Debug("Successfully saved updated workflow definition", "id", id)
+		}
+	} else {
+		slog.Debug("Using stored workflow definition for execution", "id", id)
+	}
+
 	inputs := make(map[string]interface{})
 
 	for k, v := range execReq.FormData {
