@@ -8,8 +8,8 @@ import (
 )
 
 type Service struct {
-	repo     *Repository
-	executor *Executor
+	repo     RepositoryInterface
+	executor ExecutorInterface
 }
 
 func NewService(pool *pgxpool.Pool) (*Service, error) {
@@ -20,6 +20,14 @@ func NewService(pool *pgxpool.Pool) (*Service, error) {
 		repo:     repo,
 		executor: executor,
 	}, nil
+}
+
+// NewServiceWithDependencies for mocking
+func NewServiceWithDependencies(repo RepositoryInterface, executor ExecutorInterface) *Service {
+	return &Service{
+		repo:     repo,
+		executor: executor,
+	}
 }
 
 // jsonMiddleware sets the Content-Type header to application/json
