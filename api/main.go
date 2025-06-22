@@ -33,20 +33,19 @@ func main() {
 
 	defer db.Disconnect()
 
+	// Initialise database schema and seed data
+	ctx := context.Background()
+	if err := db.InitDatabase(ctx, db.GetPool()); err != nil {
+		slog.Error("Failed to initialize database", "error", err)
+		return
+	}
+
 	// setup router
 	mainRouter := mux.NewRouter()
 
 	apiRouter := mainRouter.PathPrefix("/api/v1").Subrouter()
 
-	// Get a connection from the pool
-	conn, err := db.GetPool().Acquire(context.Background())
-	if err != nil {
-		slog.Error("Failed to acquire database connection", "error", err)
-		return
-	}
-	defer conn.Release()
-
-	workflowService, err := workflow.NewService(conn.Conn())
+	workflowService, err := workflow.NewService(db.GetPool())
 	if err != nil {
 		slog.Error("Failed to create workflow service", "error", err)
 		return

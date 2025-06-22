@@ -4,15 +4,22 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Service struct {
-	db *pgx.Conn
+	repo     *Repository
+	executor *Executor
 }
 
-func NewService(db *pgx.Conn) (*Service, error) {
-	return &Service{db: db}, nil
+func NewService(pool *pgxpool.Pool) (*Service, error) {
+	repo := NewRepository(pool)
+	executor := NewExecutor()
+
+	return &Service{
+		repo:     repo,
+		executor: executor,
+	}, nil
 }
 
 // jsonMiddleware sets the Content-Type header to application/json
@@ -30,5 +37,4 @@ func (s *Service) LoadRoutes(parentRouter *mux.Router, isProduction bool) {
 
 	router.HandleFunc("/{id}", s.HandleGetWorkflow).Methods("GET")
 	router.HandleFunc("/{id}/execute", s.HandleExecuteWorkflow).Methods("POST")
-
 }
