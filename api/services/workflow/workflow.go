@@ -79,12 +79,15 @@ func (s *Service) HandleExecuteWorkflow(w http.ResponseWriter, r *http.Request) 
 		slog.Debug("Using stored workflow definition for execution", "id", id)
 	}
 
+	// Normalise the inputs, include the form data and the operator and threshold
 	inputs := make(map[string]interface{})
 
+	// Add the form data to the inputs
 	for k, v := range execReq.FormData {
 		inputs[k] = v
 	}
 
+	// Add the operator and threshold to the inputs
 	if execReq.Condition != nil {
 		if operator, ok := execReq.Condition["operator"].(string); ok {
 			inputs["operator"] = operator

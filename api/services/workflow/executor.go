@@ -23,20 +23,19 @@ func NewExecutor() *Executor {
 
 func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]interface{}) *ExecutionResponse {
 	steps := []ExecutionStep{}
-	vars := make(map[string]interface{})
 
-	for k, v := range inputs {
-		vars[k] = v
-	}
-
+	// Assume completed by default, will be updated if any step fails
 	status := "completed"
 	nodes := wf.Definition.Nodes
 	nodeMap := make(map[string]*Node)
 
+	// Create a map of nodes by ID for quick lookup
+	// Ideal for O(1) lookup time, especially for large workflows
 	for i := range nodes {
 		nodeMap[nodes[i].ID] = &nodes[i]
 	}
 
+	// Find the start node, if not found, return a failed response
 	current := findNodeByType(nodes, "start")
 	if current == nil {
 		return &ExecutionResponse{
@@ -52,6 +51,7 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 		}
 	}
 
+	// Loop through the nodes in the workflow, executing each step
 	for current != nil {
 		step := ExecutionStep{
 			NodeID:      current.ID,
@@ -61,32 +61,33 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 			Status:      "completed",
 		}
 
+		// Switch on the node type and execute the appropriate function
 		switch current.Type {
 		case "start":
 
 		case "form":
-			if err := e.processFormNode(current, vars, &step); err != nil {
+			if err := e.processFormNode(current, inputs, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
 			}
 
 		case "integration":
-			if err := e.processIntegrationNode(ctx, current, vars, &step); err != nil {
+			if err := e.processIntegrationNode(ctx, current, inputs, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
 			}
 
 		case "condition":
-			if err := e.processConditionNode(vars, &step); err != nil {
+			if err := e.processConditionNode(inputs, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
 			}
 
 		case "email":
-			if err := e.processEmailNode(vars, &step); err != nil {
+			if err := e.processEmailNode(inputs, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
@@ -100,8 +101,10 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 			status = "failed"
 		}
 
+		// Add the step to the steps array, this will be returned to the client
 		steps = append(steps, step)
 
+		// If the step failed, return the execution response,
 		if step.Status == "failed" {
 			return &ExecutionResponse{
 				ExecutedAt: time.Now().Format(time.RFC3339),
@@ -110,11 +113,13 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 			}
 		}
 
-		nextID := findNextNodeID(wf.Definition.Edges, current.ID, vars)
+		// Find the next node to execute, if no next node, break the loop
+		nextID := findNextNodeID(wf.Definition.Edges, current.ID, inputs)
 		if nextID == "" {
 			break
 		}
 
+		// Get the next node from the node map
 		nextNode, exists := nodeMap[nextID]
 		if !exists {
 			break
@@ -122,6 +127,7 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 		current = nextNode
 	}
 
+	// The workflow is complete, return the execution response
 	return &ExecutionResponse{
 		ExecutedAt: time.Now().Format(time.RFC3339),
 		Status:     status,
@@ -129,6 +135,8 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 	}
 }
 
+// Process the form node, this will fetch the form data from the inputs
+// and add it to the output
 func (e *Executor) processFormNode(node *Node, vars map[string]interface{}, step *ExecutionStep) error {
 	metadata := node.Data.Metadata
 	inputFields, ok := metadata["inputFields"].([]interface{})
@@ -154,6 +162,7 @@ func (e *Executor) processFormNode(node *Node, vars map[string]interface{}, step
 	return nil
 }
 
+// Process the integration node, this will fetch the weather data for the city
 func (e *Executor) processIntegrationNode(ctx context.Context, node *Node, vars map[string]interface{}, step *ExecutionStep) error {
 	city, ok := vars["city"].(string)
 	if !ok {
@@ -216,7 +225,8 @@ func (e *Executor) processConditionNode(vars map[string]interface{}, step *Execu
 		conditionMet = temperature > threshold
 	}
 
-	// Store result in variables
+	// Store result in variables, this will be used to check if the condition is met
+	// in the next node. Will always overwrite the previous value.
 	vars["conditionMet"] = conditionMet
 
 	step.Output = map[string]interface{}{
@@ -230,7 +240,11 @@ func (e *Executor) processConditionNode(vars map[string]interface{}, step *Execu
 	return nil
 }
 
+// Process the email node, this will send an email to the user
+// if the condition is met
 func (e *Executor) processEmailNode(vars map[string]interface{}, step *ExecutionStep) error {
+	// Get the conditionMet variable from the variables
+	// This is set in the condition node
 	conditionMet, ok := vars["conditionMet"].(bool)
 	if !ok || !conditionMet {
 		step.Output = map[string]interface{}{
@@ -273,13 +287,19 @@ func (e *Executor) processEmailNode(vars map[string]interface{}, step *Execution
 	return nil
 }
 
+// Get the coordinates for a city from the node metadata
 func (e *Executor) getCityCoordinates(node *Node, city string) (float64, float64) {
+	// Get the node metadata which contains the City options, and the lat lon
 	metadata := node.Data.Metadata
+
+	// The options are the cities that are available to choose from
 	options, ok := metadata["options"].([]interface{})
 	if !ok {
 		return 0, 0
 	}
 
+	// Loop through the options and find the city name,
+	// and match it to the lat lon
 	for _, option := range options {
 		if cityData, ok := option.(map[string]interface{}); ok {
 			if cityName, ok := cityData["city"].(string); ok && cityName == city {
@@ -331,12 +351,17 @@ func findNodeByType(nodes []Node, nodeType string) *Node {
 	return nil
 }
 
+// Find the next node to execute, based on the current node and the variables
 func findNextNodeID(edges []Edge, currentNodeID string, vars map[string]interface{}) string {
 	for _, edge := range edges {
 		if edge.Source == currentNodeID {
+
+			// If the source handle is not empty, we need to check if the condition is met
+			// The source handle is the condition that needs to be met to continue to the next node
 			if edge.SourceHandle != "" {
 				conditionMet, ok := vars["conditionMet"].(bool)
 				if ok {
+					// If the condition is met, we need to return the target node
 					if (edge.SourceHandle == "true" && conditionMet) ||
 						(edge.SourceHandle == "false" && !conditionMet) {
 						return edge.Target

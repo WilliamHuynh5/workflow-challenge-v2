@@ -11,7 +11,7 @@ import (
 )
 
 func InitDatabase(ctx context.Context, pool *pgxpool.Pool) error {
-	slog.Info("Initializing database...")
+	slog.Info("Initialising database...")
 
 	createTableSQL := `
 		CREATE TABLE IF NOT EXISTS workflows (
