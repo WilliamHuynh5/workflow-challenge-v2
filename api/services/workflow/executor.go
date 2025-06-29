@@ -30,6 +30,7 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 	// It is passed to each node as a parameter, and is used to store the variables for the workflow.
 	// This is so each node has access to the same variables as previous nodes.
 	wfVars := make(map[string]interface{})
+
 	for k, v := range inputs {
 		wfVars[k] = v
 	}
@@ -60,8 +61,28 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 		}
 	}
 
+	// Visited is a map of nodes that have been visited
+	// This is used to check for cycles in the workflow
+	visited := make(map[string]bool)
+
 	// Loop through the nodes in the workflow, executing each step
 	for current != nil {
+		// Check for cycles
+		if visited[current.ID] {
+			return &ExecutionResponse{
+				ExecutedAt: time.Now().Format(time.RFC3339),
+				Status:     "failed",
+				Steps: append(steps, ExecutionStep{
+					NodeID: "system",
+					Type:   "system",
+					Label:  "System Error",
+					Status: "failed",
+					Error:  fmt.Sprintf("Cycle detected: node %s visited twice", current.ID),
+				}),
+			}
+		}
+		visited[current.ID] = true
+
 		step := ExecutionStep{
 			NodeID:      current.ID,
 			Type:        current.Type,
