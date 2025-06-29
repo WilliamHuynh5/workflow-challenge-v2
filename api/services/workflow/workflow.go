@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -23,6 +22,7 @@ func (s *Service) HandleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Map the workflow definition to a response that the frontend can use
 	response := map[string]interface{}{
 		"id":    workflow.Definition.ID,
 		"nodes": workflow.Definition.Nodes,
@@ -32,6 +32,7 @@ func (s *Service) HandleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
+	// Serialise the response to JSON
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode workflow response", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -40,9 +41,11 @@ func (s *Service) HandleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) HandleExecuteWorkflow(w http.ResponseWriter, r *http.Request) {
+	// Get the workflow id from the request
 	id := mux.Vars(r)["id"]
 	slog.Debug("Handling workflow execution for id", "id", id)
 
+	// Read the request body (inputs, condition, workflow definition)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		slog.Error("Failed to read request body", "error", err)
@@ -51,6 +54,7 @@ func (s *Service) HandleExecuteWorkflow(w http.ResponseWriter, r *http.Request) 
 	}
 	defer r.Body.Close()
 
+	// Unmarshal the request body into an ExecutionRequest
 	var execReq ExecutionRequest
 	if err := json.Unmarshal(body, &execReq); err != nil {
 		slog.Error("Failed to parse execution request", "error", err)
@@ -58,6 +62,7 @@ func (s *Service) HandleExecuteWorkflow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Get the workflow from the repository
 	ctx := r.Context()
 	workflow, err := s.repo.GetWorkflow(ctx, id)
 	if err != nil {
@@ -66,6 +71,7 @@ func (s *Service) HandleExecuteWorkflow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// If a workflow definition is provided, use it instead of the stored one
 	if execReq.WorkflowDefinition != nil {
 		slog.Debug("Using provided workflow definition for execution", "id", id)
 		workflow.Definition = *execReq.WorkflowDefinition
@@ -93,32 +99,16 @@ func (s *Service) HandleExecuteWorkflow(w http.ResponseWriter, r *http.Request) 
 			inputs["operator"] = operator
 		}
 		if threshold, ok := execReq.Condition["threshold"]; ok {
-			// Threshold could be a float or string or int, so normalise it to float64
-			switch v := threshold.(type) {
-			case float64:
-				inputs["threshold"] = v
-			case int:
-				inputs["threshold"] = float64(v)
-			case string:
-				if f, err := strconv.ParseFloat(v, 64); err == nil {
-					inputs["threshold"] = f
-				} else {
-					slog.Error("Invalid threshold value", "threshold", v, "error", err)
-					http.Error(w, "Invalid threshold value", http.StatusBadRequest)
-					return
-				}
-			default:
-				slog.Error("Invalid threshold type", "threshold", threshold)
-				http.Error(w, "Invalid threshold type", http.StatusBadRequest)
-				return
-			}
+			inputs["threshold"] = threshold
 		}
 	}
 
+	// Execute the workflow with the inputs
 	executionResult := s.executor.Execute(ctx, workflow, inputs)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
+	// Serialise the execution result to JSON, and return it to the frontend
 	if err := json.NewEncoder(w).Encode(executionResult); err != nil {
 		slog.Error("Failed to encode execution response", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

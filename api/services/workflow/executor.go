@@ -24,6 +24,15 @@ func NewExecutor() *Executor {
 func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]interface{}) *ExecutionResponse {
 	steps := []ExecutionStep{}
 
+	// Copy the inputs to the variables
+	// This is done to avoid modifying the original inputs
+	// Vars is the shared execution context for the workflow
+	// It is passed to each node as a parameter, and is used to store the variables for the workflow.
+	// This is so each node has access to the same variables as previous nodes.
+	wfVars := make(map[string]interface{})
+	for k, v := range inputs {
+		wfVars[k] = v
+	}
 	// Assume completed by default, will be updated if any step fails
 	status := "completed"
 	nodes := wf.Definition.Nodes
@@ -66,28 +75,28 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 		case "start":
 
 		case "form":
-			if err := e.processFormNode(current, inputs, &step); err != nil {
+			if err := e.processFormNode(current, wfVars, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
 			}
 
 		case "integration":
-			if err := e.processIntegrationNode(ctx, current, inputs, &step); err != nil {
+			if err := e.processIntegrationNode(ctx, current, wfVars, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
 			}
 
 		case "condition":
-			if err := e.processConditionNode(inputs, &step); err != nil {
+			if err := e.processConditionNode(wfVars, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
 			}
 
 		case "email":
-			if err := e.processEmailNode(inputs, &step); err != nil {
+			if err := e.processEmailNode(wfVars, &step); err != nil {
 				step.Status = "failed"
 				step.Error = err.Error()
 				status = "failed"
@@ -114,7 +123,7 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 		}
 
 		// Find the next node to execute, if no next node, break the loop
-		nextID := findNextNodeID(wf.Definition.Edges, current.ID, inputs)
+		nextID := findNextNodeID(wf.Definition.Edges, current.ID, wfVars)
 		if nextID == "" {
 			break
 		}
@@ -137,7 +146,7 @@ func (e *Executor) Execute(ctx context.Context, wf *Workflow, inputs map[string]
 
 // Process the form node, this will fetch the form data from the inputs
 // and add it to the output
-func (e *Executor) processFormNode(node *Node, vars map[string]interface{}, step *ExecutionStep) error {
+func (e *Executor) processFormNode(node *Node, wfVars map[string]interface{}, step *ExecutionStep) error {
 	metadata := node.Data.Metadata
 	inputFields, ok := metadata["inputFields"].([]interface{})
 	if !ok {
@@ -151,7 +160,7 @@ func (e *Executor) processFormNode(node *Node, vars map[string]interface{}, step
 			continue
 		}
 
-		if value, exists := vars[fieldName]; exists {
+		if value, exists := wfVars[fieldName]; exists {
 			output[fieldName] = value
 		} else {
 			return fmt.Errorf("missing required input field: %s", fieldName)
@@ -163,23 +172,26 @@ func (e *Executor) processFormNode(node *Node, vars map[string]interface{}, step
 }
 
 // Process the integration node, this will fetch the weather data for the city
-func (e *Executor) processIntegrationNode(ctx context.Context, node *Node, vars map[string]interface{}, step *ExecutionStep) error {
-	city, ok := vars["city"].(string)
+func (e *Executor) processIntegrationNode(ctx context.Context, node *Node, wfVars map[string]interface{}, step *ExecutionStep) error {
+	city, ok := wfVars["city"].(string)
 	if !ok {
 		return fmt.Errorf("city not found in variables")
 	}
 
+	// Get the coordinates for the city
 	lat, lon := e.getCityCoordinates(node, city)
 	if lat == 0 && lon == 0 {
 		return fmt.Errorf("coordinates not found for city: %s", city)
 	}
 
+	// Fetch the weather data for the city
 	temperature, err := e.fetchWeather(ctx, lat, lon)
 	if err != nil {
 		return fmt.Errorf("failed to fetch weather data: %w", err)
 	}
 
-	vars["temperature"] = temperature
+	// Store the temperature in the variables
+	wfVars["temperature"] = temperature
 
 	step.Output = map[string]interface{}{
 		"temperature": temperature,
@@ -189,24 +201,26 @@ func (e *Executor) processIntegrationNode(ctx context.Context, node *Node, vars 
 	return nil
 }
 
-func (e *Executor) processConditionNode(vars map[string]interface{}, step *ExecutionStep) error {
-	temperature, ok := vars["temperature"].(float64)
+func (e *Executor) processConditionNode(wfVars map[string]interface{}, step *ExecutionStep) error {
+	temperature, ok := wfVars["temperature"].(float64)
 	if !ok {
 		return fmt.Errorf("temperature not found in variables")
 	}
 
-	threshold, ok := vars["threshold"].(float64)
+	threshold, ok := wfVars["threshold"].(float64)
 	if !ok {
-		if thresholdInt, ok := vars["threshold"].(int); ok {
+		if thresholdInt, ok := wfVars["threshold"].(int); ok {
 			threshold = float64(thresholdInt)
 		} else {
 			return fmt.Errorf("threshold not found in variables")
 		}
 	}
 
-	operator, ok := vars["operator"].(string)
+	// Get the operator from the variables
+	operator, ok := wfVars["operator"].(string)
+	// default to greater_than if not found
 	if !ok {
-		operator = "greater_than" // default
+		operator = "greater_than"
 	}
 
 	var conditionMet bool
@@ -227,7 +241,7 @@ func (e *Executor) processConditionNode(vars map[string]interface{}, step *Execu
 
 	// Store result in variables, this will be used to check if the condition is met
 	// in the next node. Will always overwrite the previous value.
-	vars["conditionMet"] = conditionMet
+	wfVars["conditionMet"] = conditionMet
 
 	step.Output = map[string]interface{}{
 		"conditionMet": conditionMet,
@@ -242,10 +256,10 @@ func (e *Executor) processConditionNode(vars map[string]interface{}, step *Execu
 
 // Process the email node, this will send an email to the user
 // if the condition is met
-func (e *Executor) processEmailNode(vars map[string]interface{}, step *ExecutionStep) error {
+func (e *Executor) processEmailNode(wfVars map[string]interface{}, step *ExecutionStep) error {
 	// Get the conditionMet variable from the variables
 	// This is set in the condition node
-	conditionMet, ok := vars["conditionMet"].(bool)
+	conditionMet, ok := wfVars["conditionMet"].(bool)
 	if !ok || !conditionMet {
 		step.Output = map[string]interface{}{
 			"emailSent": false,
@@ -254,17 +268,17 @@ func (e *Executor) processEmailNode(vars map[string]interface{}, step *Execution
 		return nil
 	}
 
-	city, ok := vars["city"].(string)
+	city, ok := wfVars["city"].(string)
 	if !ok {
 		return fmt.Errorf("city not found in variables")
 	}
 
-	temperature, ok := vars["temperature"].(float64)
+	temperature, ok := wfVars["temperature"].(float64)
 	if !ok {
 		return fmt.Errorf("temperature not found in variables")
 	}
 
-	email, ok := vars["email"].(string)
+	email, ok := wfVars["email"].(string)
 	if !ok {
 		return fmt.Errorf("email not found in variables")
 	}
@@ -352,14 +366,14 @@ func findNodeByType(nodes []Node, nodeType string) *Node {
 }
 
 // Find the next node to execute, based on the current node and the variables
-func findNextNodeID(edges []Edge, currentNodeID string, vars map[string]interface{}) string {
+func findNextNodeID(edges []Edge, currentNodeID string, wfVars map[string]interface{}) string {
 	for _, edge := range edges {
 		if edge.Source == currentNodeID {
 
 			// If the source handle is not empty, we need to check if the condition is met
 			// The source handle is the condition that needs to be met to continue to the next node
 			if edge.SourceHandle != "" {
-				conditionMet, ok := vars["conditionMet"].(bool)
+				conditionMet, ok := wfVars["conditionMet"].(bool)
 				if ok {
 					// If the condition is met, we need to return the target node
 					if (edge.SourceHandle == "true" && conditionMet) ||
